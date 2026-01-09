@@ -1,17 +1,19 @@
-# Makefile for sudo
+# Makefile for gzip/gunzip
 
 CC = cc
 CFLAGS = -O
-PROGRAM = gunzip
-SRCS = gunzip.c
+PROGRAMS = gunzip gzip
 
-all: $(PROGRAM)
+all: $(PROGRAMS)
 
-$(PROGRAM): $(SRCS)
-	$(CC) $(CFLAGS) -o $(PROGRAM) $(SRCS);
+gunzip: gunzip.c
+	$(CC) $(CFLAGS) -o gunzip gunzip.c;
+
+gzip: gzip.c
+	$(CC) $(CFLAGS) -o gzip gzip.c;
 
 clean:
-	rm -f $(PROGRAM) *.o
+	rm -f $(PROGRAMS) *.o
 
 .PHONY: all clean
 
