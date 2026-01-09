@@ -109,9 +109,9 @@ static void flush_bits(void)
 {
     if (outbits > 0) {
         putc((int)(outbuf & 0xff), outfile);
-        outbuf = 0;
-        outbits = 0;
     }
+    outbuf = 0;
+    outbits = 0;
 }
 
 /*
@@ -156,18 +156,17 @@ static void write_header(char *filename)
 static void write_trailer(void)
 {
     unsigned long c = crc ^ 0xffffffffL;
+    int i;
     
-    /* CRC32 */
-    putc((int)(c & 0xff), outfile);
-    putc((int)((c >> 8) & 0xff), outfile);
-    putc((int)((c >> 16) & 0xff), outfile);
-    putc((int)((c >> 24) & 0xff), outfile);
+    /* CRC32 - write byte by byte using put_bits */
+    for (i = 0; i < 4; i++) {
+        put_bits((int)((c >> (i * 8)) & 0xff), 8);
+    }
     
-    /* Uncompressed size */
-    putc((int)(input_len & 0xff), outfile);
-    putc((int)((input_len >> 8) & 0xff), outfile);
-    putc((int)((input_len >> 16) & 0xff), outfile);
-    putc((int)((input_len >> 24) & 0xff), outfile);
+    /* Uncompressed size - write byte by byte using put_bits */
+    for (i = 0; i < 4; i++) {
+        put_bits((int)((input_len >> (i * 8)) & 0xff), 8);
+    }
 }
 
 /*
@@ -489,6 +488,11 @@ static int compress_data(void)
     /* Send end of block (code 256) */
     put_bits(reverse_bits(0, 7), 7);  /* Code 256 is 0000000 (7 bits, reversed) */
     
+    /* Pad to byte boundary */
+    if (outbits > 0) {
+        put_bits(0, 8 - outbits);
+    }
+    
     /* Clear progress line */
     fprintf(stderr, "\rCompressing: 100%% (%ld/%ld bytes)\n", file_size, file_size);
     
@@ -509,7 +513,7 @@ int main(int argc, char *argv[])
     inname = argv[1];
     
     /* Open input file */
-    infile = fopen(inname, "r");
+    infile = fopen(inname, "rb");
     if (infile == NULL) {
         perror(inname);
         return 1;
@@ -530,7 +534,7 @@ int main(int argc, char *argv[])
     basename = basename ? basename + 1 : inname;
     
     /* Open output file */
-    outfile = fopen(outname, "w");
+    outfile = fopen(outname, "wb");
     if (outfile == NULL) {
         perror(outname);
         free(outname);
@@ -578,6 +582,9 @@ int main(int argc, char *argv[])
     
     /* Flush output bits */
     flush_bits();
+    
+    /* Flush stdio buffer to ensure bit output is complete */
+    fflush(outfile);
     
     /* Write gzip trailer */
     write_trailer();

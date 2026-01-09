@@ -14,14 +14,17 @@ This is a bare-bones implementation of the gzip/DEFLATE compression and decompre
   - Fixed Huffman coding (type 1)
   - Dynamic Huffman coding (type 2)
 - **Full gzip Header Parsing**: Reads and displays all header information including modification time, flags, original filename, comments, and header CRC
+- **CRC32 Verification**: Validates data integrity by verifying CRC32 checksums
 - **32KB Sliding Window**: Full DEFLATE-compliant window size
+- **Progress Indication**: Shows decompression progress with percentage and bytes processed
 - **Standard Compatibility**: Decompresses files created by any standard gzip implementation
 
 ### gzip (Compressor)
 - **LZ77 String Matching**: Hash-based matching with 4KB sliding window
 - **Memory Efficient**: ~12KB total memory usage (4KB window + hash tables)
 - **Standard gzip Format**: Creates files compatible with all gunzip implementations
-- **CRC32 Verification**: Generates proper CRC32 checksums for data integrity
+- **CRC32 Checksums**: Generates proper CRC32 checksums for data integrity
+- **Progress Indication**: Shows compression progress with percentage and bytes processed
 
 
 ## Building
@@ -85,7 +88,7 @@ Compressed data starts at byte offset: 21
 
 Decompressing to: LICENSE
 Block: final, type=1
-Decompression successful!
+Decompression successful! Output: 1083 bytes (CRC OK)
 ```
 
 ## Implementation Details
@@ -109,7 +112,6 @@ Decompression successful!
 
 - **Compression is very slow!** It takes my (emulated) PDP-11 22 minutes to compress the King James Version of the Bible (4.6MB to 2.3MB) compared to the 6 minutes it takes to decompress the file. 
 - **Single file processing**: Processes one file at a time
-- **No CRC verification in gunzip**: Does not verify the CRC32 checksum (but gzip generates correct checksums)
 - **Fixed Huffman only for compression**: Does not generate dynamic Huffman trees (but achieves reasonable compression ratios)
 - **Reduced window size for compression**: 4KB window vs. standard 32KB (may reduce compression ratio on large files with distant matches)
 

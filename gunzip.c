@@ -45,11 +45,43 @@ static long compressed_size = 0;
 static long bytes_output = 0;
 static unsigned int progress_counter = 0;
 
+/* CRC32 table and value */
+static unsigned long crc_table[256];
+static unsigned long crc = 0xffffffffL;
+
 /* Huffman code structure */
 struct huffman {
     short *count;   /* Number of codes of each length */
     short *symbol;  /* Symbols in canonical order */
 };
+
+/*
+ * Initialize CRC32 table
+ */
+static void make_crc_table(void)
+{
+    unsigned long c;
+    int n, k;
+    
+    for (n = 0; n < 256; n++) {
+        c = (unsigned long)n;
+        for (k = 0; k < 8; k++) {
+            if (c & 1)
+                c = 0xedb88320L ^ (c >> 1);
+            else
+                c = c >> 1;
+        }
+        crc_table[n] = c;
+    }
+}
+
+/*
+ * Update CRC32 with new byte
+ */
+static void update_crc(unsigned char c)
+{
+    crc = crc_table[(crc ^ c) & 0xff] ^ (crc >> 8);
+}
 
 /*
  * Get bits from input stream
@@ -146,6 +178,7 @@ static void output_byte(unsigned char c, FILE *outfile)
     if (wpos >= WSIZE)
         wpos = 0;
     putc(c, outfile);
+    update_crc(c);
     bytes_output++;
     
     /* Show progress every 1000 bytes */
@@ -446,6 +479,50 @@ static int inflate(FILE *outfile)
 }
 
 /*
+ * Read and verify gzip trailer
+ */
+static int read_trailer(FILE *fp)
+{
+    unsigned char buf[8];
+    unsigned long expected_crc, expected_size;
+    unsigned long actual_crc;
+    
+    /* Read 8-byte trailer */
+    if (fread(buf, 1, 8, fp) != 8) {
+        fprintf(stderr, "Error: Cannot read gzip trailer\n");
+        return -1;
+    }
+    
+    /* Extract CRC32 (little-endian) */
+    expected_crc = (unsigned long)buf[0] |
+                   ((unsigned long)buf[1] << 8) |
+                   ((unsigned long)buf[2] << 16) |
+                   ((unsigned long)buf[3] << 24);
+    
+    /* Extract uncompressed size (little-endian) */
+    expected_size = (unsigned long)buf[4] |
+                    ((unsigned long)buf[5] << 8) |
+                    ((unsigned long)buf[6] << 16) |
+                    ((unsigned long)buf[7] << 24);
+    
+    /* Finalize CRC */
+    actual_crc = crc ^ 0xffffffffL;
+    
+    if (expected_crc != actual_crc) {
+        fprintf(stderr, "\nError: CRC mismatch!\n");
+        fprintf(stderr, "  Expected: 0x%08lx\n", expected_crc);
+        fprintf(stderr, "  Actual:   0x%08lx\n", actual_crc);
+        return -1;
+    }
+    
+    if ((expected_size & 0xffffffffL) != (bytes_output & 0xffffffffL)) {
+        fprintf(stderr, "Warning: Size mismatch (modulo 2^32)\n");
+    }
+    
+    return 0;
+}
+
+/*
  * Read and validate gzip header
  */
 int read_header(FILE *fp)
@@ -568,7 +645,7 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    infile = fopen(argv[1], "r");
+    infile = fopen(argv[1], "rb");
     if (infile == NULL) {
         perror(argv[1]);
         return 1;
@@ -599,7 +676,7 @@ int main(int argc, char *argv[])
     
     printf("\nDecompressing to: %s\n", outname);
     
-    outfile = fopen(outname, "w");
+    outfile = fopen(outname, "wb");
     if (outfile == NULL) {
         perror(outname);
         free(outname);
@@ -623,6 +700,11 @@ int main(int argc, char *argv[])
     wpos = 0;
     memset(window, 0, (unsigned)WSIZE);
     
+    /* Initialize CRC */
+    make_crc_table();
+    crc = 0xffffffffL;
+    bytes_output = 0;
+    
     /* Decompress */
     if (inflate(outfile) != 0) {
         fprintf(stderr, "\nDecompression failed\n");
@@ -637,7 +719,17 @@ int main(int argc, char *argv[])
     /* Clear progress line and show completion */
     fprintf(stderr, "\rDecompressing: 100%% (%ld/%ld bytes)\n", 
             compressed_size, compressed_size);
-    printf("Decompression successful! Output: %ld bytes\n", bytes_output);
+    
+    /* Read and verify trailer */
+    if (read_trailer(infile) != 0) {
+        fclose(outfile);
+        fclose(infile);
+        free(window);
+        free(outname);
+        return 1;
+    }
+    
+    printf("Decompression successful! Output: %ld bytes (CRC OK)\n", bytes_output);
     
     fclose(outfile);
     fclose(infile);
