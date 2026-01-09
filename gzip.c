@@ -417,6 +417,12 @@ static void send_distance(int dist)
 static int compress_data(void)
 {
     unsigned int i;
+    long file_size, current_pos;
+    
+    /* Get file size for progress reporting */
+    fseek(infile, 0L, 2);  /* SEEK_END */
+    file_size = ftell(infile);
+    fseek(infile, 0L, 0);  /* SEEK_SET */
     
     /* Initialize hash table */
     for (i = 0; i < HASH_SIZE; i++)
@@ -440,7 +446,12 @@ static int compress_data(void)
     while (lookahead > 0) {
         static unsigned int count = 0;
         if (++count % 100 == 0) {
-            fprintf(stderr, "Progress: wpos=%u lookahead=%u\n", wpos, lookahead);
+            current_pos = ftell(infile);
+            if (file_size > 0) {
+                int percent = (int)((current_pos * 100L) / file_size);
+                fprintf(stderr, "\rCompressing: %d%% (%ld/%ld bytes)", 
+                        percent, current_pos, file_size);
+            }
         }
         
         /* Try to find a match */
@@ -477,6 +488,9 @@ static int compress_data(void)
     
     /* Send end of block (code 256) */
     put_bits(reverse_bits(0, 7), 7);  /* Code 256 is 0000000 (7 bits, reversed) */
+    
+    /* Clear progress line */
+    fprintf(stderr, "\rCompressing: 100%% (%ld/%ld bytes)\n", file_size, file_size);
     
     return 0;
 }

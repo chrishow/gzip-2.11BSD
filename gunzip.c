@@ -40,6 +40,11 @@ static FILE *infile;
 static unsigned char *window = NULL;
 static unsigned int wpos = 0;
 
+/* Progress tracking */
+static long compressed_size = 0;
+static long bytes_output = 0;
+static unsigned int progress_counter = 0;
+
 /* Huffman code structure */
 struct huffman {
     short *count;   /* Number of codes of each length */
@@ -141,6 +146,17 @@ static void output_byte(unsigned char c, FILE *outfile)
     if (wpos >= WSIZE)
         wpos = 0;
     putc(c, outfile);
+    bytes_output++;
+    
+    /* Show progress every 1000 bytes */
+    if (++progress_counter % 1000 == 0 && compressed_size > 0) {
+        long current_pos = ftell(infile);
+        if (current_pos > 0) {
+            int percent = (int)((current_pos * 100L) / compressed_size);
+            fprintf(stderr, "\rDecompressing: %d%% (%ld/%ld bytes)", 
+                    percent, current_pos, compressed_size);
+        }
+    }
 }
 
 /*
@@ -558,6 +574,13 @@ int main(int argc, char *argv[])
         return 1;
     }
     
+    /* Get compressed file size for progress tracking */
+    fseek(infile, 0L, 2);  /* SEEK_END */
+    compressed_size = ftell(infile);
+    fseek(infile, 0L, 0);  /* SEEK_SET */
+    bytes_output = 0;
+    progress_counter = 0;
+    
     if (read_header(infile) != 0) {
         fclose(infile);
         return 1;
@@ -602,7 +625,7 @@ int main(int argc, char *argv[])
     
     /* Decompress */
     if (inflate(outfile) != 0) {
-        fprintf(stderr, "Decompression failed\n");
+        fprintf(stderr, "\nDecompression failed\n");
         fclose(outfile);
     free(window);
         fclose(infile);
@@ -611,7 +634,10 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    printf("Decompression successful!\n");
+    /* Clear progress line and show completion */
+    fprintf(stderr, "\rDecompressing: 100%% (%ld/%ld bytes)\n", 
+            compressed_size, compressed_size);
+    printf("Decompression successful! Output: %ld bytes\n", bytes_output);
     
     fclose(outfile);
     fclose(infile);
