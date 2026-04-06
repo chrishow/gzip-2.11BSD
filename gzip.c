@@ -129,8 +129,12 @@ static void write_header(char *filename)
     /* Compression method */
     putc(GZIP_DEFLATE, outfile);
     
-    /* Flags - include original filename */
-    putc(0x08, outfile);
+    /* Flags - include original filename if provided */
+    if (filename != NULL) {
+        putc(0x08, outfile);  /* FNAME flag */
+    } else {
+        putc(0x00, outfile);  /* No flags */
+    }
     
     /* Modification time */
     putc((int)(mtime & 0xff), outfile);
@@ -144,11 +148,13 @@ static void write_header(char *filename)
     /* OS (3 = Unix) */
     putc(3, outfile);
     
-    /* Original filename */
-    while (*filename) {
-        putc(*filename++, outfile);
+    /* Original filename (only if provided) */
+    if (filename != NULL) {
+        while (*filename) {
+            putc(*filename++, outfile);
+        }
+        putc(0, outfile);
     }
-    putc(0, outfile);
 }
 
 /*
@@ -515,9 +521,9 @@ int main(int argc, char *argv[])
             strcmp(argv[i], "--to-stdout") == 0) {
             stdout_flag = 1;
         }
-        else if (argv[i][0] == '-') {
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
-            fprintf(stderr, "Usage: %s [-c|--stdout|--to-stdout] <file>\n", argv[0]);
+            fprintf(stderr, "Usage: %s [-c|--stdout|--to-stdout] [file]\n", argv[0]);
             return 1;
         }
         else {
@@ -529,21 +535,24 @@ int main(int argc, char *argv[])
         }
     }
     
-    if (inname == NULL) {
-        fprintf(stderr, "Usage: %s [-c|--stdout|--to-stdout] <file>\n", argv[0]);
-        return 1;
+    /* If no input file specified or "-", use stdin */
+    if (inname == NULL || strcmp(inname, "-") == 0) {
+        infile = stdin;
+        basename = NULL;  /* No filename for stdin */
+        stdout_flag = 1;  /* Force output to stdout */
     }
-    
-    /* Open input file */
-    infile = fopen(inname, "rb");
-    if (infile == NULL) {
-        perror(inname);
-        return 1;
+    else {
+        /* Open input file */
+        infile = fopen(inname, "rb");
+        if (infile == NULL) {
+            perror(inname);
+            return 1;
+        }
+        
+        /* Get basename for gzip header */
+        basename = strrchr(inname, '/');
+        basename = basename ? basename + 1 : inname;
     }
-    
-    /* Get basename for gzip header */
-    basename = strrchr(inname, '/');
-    basename = basename ? basename + 1 : inname;
     
     /* Setup output */
     if (stdout_flag) {
@@ -571,7 +580,9 @@ int main(int argc, char *argv[])
             return 1;
         }
         
-        fprintf(stderr, "Compressing %s to %s...\n", inname, outname);
+        if (inname != NULL) {
+            fprintf(stderr, "Compressing %s to %s...\n", inname, outname);
+        }
     }
     
     /* Allocate buffers */
@@ -588,7 +599,8 @@ int main(int argc, char *argv[])
             fclose(outfile);
             free(outname);
         }
-        fclose(infile);
+        if (infile != stdin)
+            fclose(infile);
         return 1;
     }
     
@@ -610,7 +622,8 @@ int main(int argc, char *argv[])
             fclose(outfile);
             free(outname);
         }
-        fclose(infile);
+        if (infile != stdin)
+            fclose(infile);
         return 1;
     }
     
@@ -636,7 +649,8 @@ int main(int argc, char *argv[])
         fclose(outfile);
         free(outname);
     }
-    fclose(infile);
+    if (infile != stdin)
+        fclose(infile);
     
     return 0;
 }
