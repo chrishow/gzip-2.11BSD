@@ -34,6 +34,7 @@ static unsigned int match_length = 0;   /* Length of current match */
 /* Input/output */
 static FILE *infile = NULL;
 static FILE *outfile = NULL;
+static int stdout_flag = 0;  /* Compress to stdout */
 
 /* Bit output buffer */
 static unsigned long outbuf = 0;
@@ -504,13 +505,34 @@ int main(int argc, char *argv[])
     char *inname, *outname;
     char *basename;
     int len;
+    int i;
     
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <file>\n", argv[0]);
-        return 1;
+    /* Parse command line arguments */
+    inname = NULL;
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0 || 
+            strcmp(argv[i], "--stdout") == 0 ||
+            strcmp(argv[i], "--to-stdout") == 0) {
+            stdout_flag = 1;
+        }
+        else if (argv[i][0] == '-') {
+            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            fprintf(stderr, "Usage: %s [-c|--stdout|--to-stdout] <file>\n", argv[0]);
+            return 1;
+        }
+        else {
+            if (inname != NULL) {
+                fprintf(stderr, "Error: Multiple input files specified\n");
+                return 1;
+            }
+            inname = argv[i];
+        }
     }
     
-    inname = argv[1];
+    if (inname == NULL) {
+        fprintf(stderr, "Usage: %s [-c|--stdout|--to-stdout] <file>\n", argv[0]);
+        return 1;
+    }
     
     /* Open input file */
     infile = fopen(inname, "rb");
@@ -519,30 +541,38 @@ int main(int argc, char *argv[])
         return 1;
     }
     
-    /* Create output filename */
-    len = strlen(inname);
-    outname = malloc(len + 4);
-    if (outname == NULL) {
-        fprintf(stderr, "Out of memory\n");
-        fclose(infile);
-        return 1;
-    }
-    sprintf(outname, "%s.gz", inname);
-    
     /* Get basename for gzip header */
     basename = strrchr(inname, '/');
     basename = basename ? basename + 1 : inname;
     
-    /* Open output file */
-    outfile = fopen(outname, "wb");
-    if (outfile == NULL) {
-        perror(outname);
-        free(outname);
-        fclose(infile);
-        return 1;
+    /* Setup output */
+    if (stdout_flag) {
+        /* Compress to stdout */
+        outfile = stdout;
+        outname = NULL;
     }
-    
-    printf("Compressing %s to %s...\n", inname, outname);
+    else {
+        /* Create output filename */
+        len = strlen(inname);
+        outname = malloc(len + 4);
+        if (outname == NULL) {
+            fprintf(stderr, "Out of memory\n");
+            fclose(infile);
+            return 1;
+        }
+        sprintf(outname, "%s.gz", inname);
+        
+        /* Open output file */
+        outfile = fopen(outname, "wb");
+        if (outfile == NULL) {
+            perror(outname);
+            free(outname);
+            fclose(infile);
+            return 1;
+        }
+        
+        fprintf(stderr, "Compressing %s to %s...\n", inname, outname);
+    }
     
     /* Allocate buffers */
     window = (unsigned char *)malloc((unsigned)(WSIZE * 2));
@@ -554,9 +584,11 @@ int main(int argc, char *argv[])
         if (window) free(window);
         if (hash_head) free(hash_head);
         if (prev) free(prev);
-        fclose(outfile);
+        if (!stdout_flag) {
+            fclose(outfile);
+            free(outname);
+        }
         fclose(infile);
-        free(outname);
         return 1;
     }
     
@@ -574,9 +606,11 @@ int main(int argc, char *argv[])
         free(window);
         free(hash_head);
         free(prev);
-        fclose(outfile);
+        if (!stdout_flag) {
+            fclose(outfile);
+            free(outname);
+        }
         fclose(infile);
-        free(outname);
         return 1;
     }
     
@@ -589,16 +623,20 @@ int main(int argc, char *argv[])
     /* Write gzip trailer */
     write_trailer();
     
-    printf("Compressed %lu bytes to %ld bytes\n", 
-           input_len, ftell(outfile));
+    if (!stdout_flag) {
+        fprintf(stderr, "Compressed %lu bytes to %ld bytes\n", 
+               input_len, ftell(outfile));
+    }
     
     /* Cleanup */
     free(window);
     free(hash_head);
     free(prev);
-    fclose(outfile);
+    if (!stdout_flag) {
+        fclose(outfile);
+        free(outname);
+    }
     fclose(infile);
-    free(outname);
     
     return 0;
 }
