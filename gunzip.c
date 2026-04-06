@@ -35,6 +35,7 @@ static char *os_names[] = {
 static unsigned long bitbuf = 0;
 static int bitcount = 0;
 static FILE *infile;
+static int stdout_flag = 0;  /* Decompress to stdout */
 
 /* Output window for LZ77 decompression */
 static unsigned char *window = NULL;
@@ -182,7 +183,7 @@ static void output_byte(unsigned char c, FILE *outfile)
     bytes_output++;
     
     /* Show progress every 1000 bytes */
-    if (++progress_counter % 1000 == 0 && compressed_size > 0) {
+    if (++progress_counter % 1000 == 0 && compressed_size > 0 && !stdout_flag) {
         long current_pos = ftell(infile);
         if (current_pos > 0) {
             int percent = (int)((current_pos * 100L) / compressed_size);
@@ -448,7 +449,9 @@ static int inflate(FILE *outfile)
             return -1;
         }
         
-        printf("Block: %s, type=%d\n", bfinal ? "final" : "non-final", btype);
+        if (!stdout_flag) {
+            printf("Block: %s, type=%d\n", bfinal ? "final" : "non-final", btype);
+        }
         
         switch (btype) {
             case 0:
@@ -559,20 +562,23 @@ int read_header(FILE *fp)
             ((unsigned long)buf[6] << 16) |
             ((unsigned long)buf[7] << 24);
     
-    printf("GZIP Header Information:\n");
-    printf("  Magic:         0x%02x 0x%02x (valid)\n", buf[0], buf[1]);
-    printf("  Method:        %d (deflate)\n", buf[2]);
-    printf("  Flags:         0x%02x\n", flags);
-    if (flags & FTEXT)    printf("    - Text file\n");
-    if (flags & FHCRC)    printf("    - Header CRC present\n");
-    if (flags & FEXTRA)   printf("    - Extra field present\n");
-    if (flags & FNAME)    printf("    - Original filename present\n");
-    if (flags & FCOMMENT) printf("    - Comment present\n");
-    
-    printf("  Mod time:      %lu\n", mtime);
-    printf("  Extra flags:   0x%02x\n", buf[8]);
-    printf("  OS:            %d (%s)\n", buf[9], 
-           buf[9] < 14 ? os_names[buf[9]] : "unknown");
+    /* Only print header info if not writing to stdout */
+    if (!stdout_flag) {
+        printf("GZIP Header Information:\n");
+        printf("  Magic:         0x%02x 0x%02x (valid)\n", buf[0], buf[1]);
+        printf("  Method:        %d (deflate)\n", buf[2]);
+        printf("  Flags:         0x%02x\n", flags);
+        if (flags & FTEXT)    printf("    - Text file\n");
+        if (flags & FHCRC)    printf("    - Header CRC present\n");
+        if (flags & FEXTRA)   printf("    - Extra field present\n");
+        if (flags & FNAME)    printf("    - Original filename present\n");
+        if (flags & FCOMMENT) printf("    - Comment present\n");
+        
+        printf("  Mod time:      %lu\n", mtime);
+        printf("  Extra flags:   0x%02x\n", buf[8]);
+        printf("  OS:            %d (%s)\n", buf[9], 
+               buf[9] < 14 ? os_names[buf[9]] : "unknown");
+    }
     
     /* Handle optional fields */
     
@@ -583,7 +589,9 @@ int read_header(FILE *fp)
             return -1;
         }
         xlen = buf[0] | (buf[1] << 8);
-        printf("  Extra field:   %d bytes\n", xlen);
+        if (!stdout_flag) {
+            printf("  Extra field:   %d bytes\n", xlen);
+        }
         /* Skip extra field */
         for (i = 0; i < xlen; i++) {
             if (getc(fp) == EOF) {
@@ -595,11 +603,17 @@ int read_header(FILE *fp)
     
     /* Original filename */
     if (flags & FNAME) {
-        printf("  Filename:      ");
-        while ((c = getc(fp)) != 0 && c != EOF) {
-            putchar(c);
+        if (!stdout_flag) {
+            printf("  Filename:      ");
         }
-        printf("\n");
+        while ((c = getc(fp)) != 0 && c != EOF) {
+            if (!stdout_flag) {
+                putchar(c);
+            }
+        }
+        if (!stdout_flag) {
+            printf("\n");
+        }
         if (c == EOF) {
             fprintf(stderr, "Error: Premature EOF in filename\n");
             return -1;
@@ -608,11 +622,17 @@ int read_header(FILE *fp)
     
     /* Comment */
     if (flags & FCOMMENT) {
-        printf("  Comment:       ");
-        while ((c = getc(fp)) != 0 && c != EOF) {
-            putchar(c);
+        if (!stdout_flag) {
+            printf("  Comment:       ");
         }
-        printf("\n");
+        while ((c = getc(fp)) != 0 && c != EOF) {
+            if (!stdout_flag) {
+                putchar(c);
+            }
+        }
+        if (!stdout_flag) {
+            printf("\n");
+        }
         if (c == EOF) {
             fprintf(stderr, "Error: Premature EOF in comment\n");
             return -1;
@@ -625,11 +645,15 @@ int read_header(FILE *fp)
             fprintf(stderr, "Error: Cannot read header CRC\n");
             return -1;
         }
-        printf("  Header CRC:    0x%02x%02x\n", buf[1], buf[0]);
+        if (!stdout_flag) {
+            printf("  Header CRC:    0x%02x%02x\n", buf[1], buf[0]);
+        }
     }
     
-    printf("\nHeader parsed successfully!\n");
-    printf("Compressed data starts at byte offset: %ld\n", ftell(fp));
+    if (!stdout_flag) {
+        printf("\nHeader parsed successfully!\n");
+        printf("Compressed data starts at byte offset: %ld\n", ftell(fp));
+    }
     
     return 0;
 }
@@ -638,59 +662,102 @@ int main(int argc, char *argv[])
 {
     FILE *outfile;
     char *outname;
+    char *inname;
     int len;
+    int i;
     
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <gzip-file>\n", argv[0]);
-        return 1;
+    /* Parse command line arguments */
+    inname = NULL;
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0 || 
+            strcmp(argv[i], "--stdout") == 0 ||
+            strcmp(argv[i], "--to-stdout") == 0) {
+            stdout_flag = 1;
+        }
+        else if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            fprintf(stderr, "Usage: %s [-c|--stdout|--to-stdout] [file]\n", argv[0]);
+            return 1;
+        }
+        else {
+            if (inname != NULL) {
+                fprintf(stderr, "Error: Multiple input files specified\n");
+                return 1;
+            }
+            inname = argv[i];
+        }
     }
     
-    infile = fopen(argv[1], "rb");
-    if (infile == NULL) {
-        perror(argv[1]);
-        return 1;
+    /* If no input file specified or "-", use stdin */
+    if (inname == NULL || strcmp(inname, "-") == 0) {
+        infile = stdin;
+        stdout_flag = 1;  /* Force output to stdout */
+    }
+    else {
+        infile = fopen(inname, "rb");
+        if (infile == NULL) {
+            perror(inname);
+            return 1;
+        }
     }
     
-    /* Get compressed file size for progress tracking */
-    fseek(infile, 0L, 2);  /* SEEK_END */
-    compressed_size = ftell(infile);
-    fseek(infile, 0L, 0);  /* SEEK_SET */
+    /* Get compressed file size for progress tracking (not possible with stdin) */
+    if (infile != stdin) {
+        fseek(infile, 0L, 2);  /* SEEK_END */
+        compressed_size = ftell(infile);
+        fseek(infile, 0L, 0);  /* SEEK_SET */
+    } else {
+        compressed_size = -1;  /* Unknown size */
+    }
     bytes_output = 0;
     progress_counter = 0;
     
     if (read_header(infile) != 0) {
-        fclose(infile);
+        if (infile != stdin)
+            fclose(infile);
         return 1;
     }
     
-    /* Create output filename (remove .gz extension) */
-    len = strlen(argv[1]);
-    if (len > 3 && strcmp(argv[1] + len - 3, ".gz") == 0) {
-        outname = malloc(len - 2);
-        strncpy(outname, argv[1], len - 3);
-        outname[len - 3] = '\0';
-    } else {
-        outname = malloc(len + 5);
-        sprintf(outname, "%s.out", argv[1]);
+    /* Setup output */
+    if (stdout_flag) {
+        /* Decompress to stdout */
+        outfile = stdout;
+        outname = NULL;
     }
-    
-    printf("\nDecompressing to: %s\n", outname);
-    
-    outfile = fopen(outname, "wb");
-    if (outfile == NULL) {
-        perror(outname);
-        free(outname);
-        fclose(infile);
-        return 1;
+    else {
+        /* Create output filename (remove .gz extension) */
+        len = strlen(inname);
+        if (len > 3 && strcmp(inname + len - 3, ".gz") == 0) {
+            outname = malloc(len - 2);
+            strncpy(outname, inname, len - 3);
+            outname[len - 3] = '\0';
+        } else {
+            outname = malloc(len + 5);
+            sprintf(outname, "%s.out", inname);
+        }
+        
+        fprintf(stderr, "\nDecompressing to: %s\n", outname);
+        
+        outfile = fopen(outname, "wb");
+        if (outfile == NULL) {
+            perror(outname);
+            free(outname);
+            if (infile != stdin)
+                fclose(infile);
+            return 1;
+        }
     }
     
     /* Allocate decompression window */
     window = (unsigned char *)malloc((unsigned)WSIZE);
     if (window == NULL) {
         fprintf(stderr, "Error: Cannot allocate 32KB window (out of memory)\n");
-        fclose(outfile);
-        fclose(infile);
-        free(outname);
+        if (!stdout_flag) {
+            fclose(outfile);
+            free(outname);
+        }
+        if (infile != stdin)
+            fclose(infile);
         return 1;
     }
     
@@ -708,31 +775,46 @@ int main(int argc, char *argv[])
     /* Decompress */
     if (inflate(outfile) != 0) {
         fprintf(stderr, "\nDecompression failed\n");
-        fclose(outfile);
-    free(window);
-        fclose(infile);
-        free(outname);
+        if (!stdout_flag) {
+            fclose(outfile);
+            free(outname);
+        }
+        if (infile != stdin)
+            fclose(infile);
         free(window);
         return 1;
     }
     
     /* Clear progress line and show completion */
-    fprintf(stderr, "\rDecompressing: 100%% (%ld/%ld bytes)\n", 
-            compressed_size, compressed_size);
+    if (!stdout_flag && compressed_size > 0) {
+        fprintf(stderr, "\rDecompressing: 100%% (%ld/%ld bytes)\n", 
+                compressed_size, compressed_size);
+    }
     
     /* Read and verify trailer */
     if (read_trailer(infile) != 0) {
-        fclose(outfile);
-        fclose(infile);
+        if (!stdout_flag) {
+            fclose(outfile);
+            free(outname);
+        }
+        if (infile != stdin)
+            fclose(infile);
         free(window);
-        free(outname);
         return 1;
     }
     
-    printf("Decompression successful! Output: %ld bytes (CRC OK)\n", bytes_output);
+    if (!stdout_flag) {
+        fprintf(stderr, "Decompression successful! Output: %ld bytes (CRC OK)\n", bytes_output);
+    }
     
-    fclose(outfile);
-    fclose(infile);
-    free(outname);
+    /* Cleanup */
+    if (!stdout_flag) {
+        fclose(outfile);
+        free(outname);
+    }
+    if (infile != stdin)
+        fclose(infile);
+    free(window);
+    
     return 0;
 }
