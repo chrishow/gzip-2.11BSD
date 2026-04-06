@@ -17,6 +17,7 @@ This is a bare-bones implementation of the gzip/DEFLATE compression and decompre
 - **CRC32 Verification**: Validates data integrity by verifying CRC32 checksums
 - **32KB Sliding Window**: Full DEFLATE-compliant window size
 - **Progress Indication**: Shows decompression progress with percentage and bytes processed
+- **Stdin/Stdout Support**: Read from stdin and/or write to stdout with `-c`, `--stdout`, or `--to-stdout` options
 - **Standard Compatibility**: Decompresses files created by any standard gzip implementation
 
 ### gzip (Compressor)
@@ -25,6 +26,8 @@ This is a bare-bones implementation of the gzip/DEFLATE compression and decompre
 - **Standard gzip Format**: Creates files compatible with all gunzip implementations
 - **CRC32 Checksums**: Generates proper CRC32 checksums for data integrity
 - **Progress Indication**: Shows compression progress with percentage and bytes processed
+- **Stdin/Stdout Support**: Read from stdin and/or write to stdout with `-c`, `--stdout`, or `--to-stdout` options
+- **Pipe-Friendly**: Integrates seamlessly in Unix pipelines
 
 
 ## Building
@@ -41,6 +44,7 @@ This will compile both utilities:
 
 ### Compressing Files
 
+#### Compress to a .gz file:
 ```bash
 ./gzip filename
 ```
@@ -57,8 +61,39 @@ Compressing LICENSE to LICENSE.gz...
 Compressed 1083 bytes to 616 bytes
 ```
 
+#### Compress to stdout:
+```bash
+./gzip -c filename > output.gz
+./gzip --stdout filename > output.gz
+./gzip --to-stdout filename > output.gz
+```
+
+The `-c`, `--stdout`, and `--to-stdout` options write compressed data to stdout instead of creating a `.gz` file.
+
+**Example:**
+```bash
+$ ./gzip -c LICENSE > compressed.gz
+```
+
+#### Compress from stdin:
+```bash
+cat filename | ./gzip > output.gz
+./gzip - > output.gz
+./gzip < filename > output.gz
+```
+
+When no input filename is specified (or `-` is used), gzip reads from stdin and writes to stdout. No filename is stored in the gzip header when compressing from stdin.
+
+**Example:**
+```bash
+$ cat LICENSE | ./gzip > LICENSE.gz
+$ echo "Hello, world!" | ./gzip | ./gunzip
+Hello, world!
+```
+
 ### Decompressing Files
 
+#### Decompress to a file:
 ```bash
 ./gunzip filename.gz
 ```
@@ -89,6 +124,54 @@ Compressed data starts at byte offset: 21
 Decompressing to: LICENSE
 Block: final, type=1
 Decompression successful! Output: 1083 bytes (CRC OK)
+```
+
+#### Decompress to stdout:
+```bash
+./gunzip -c filename.gz
+./gunzip --stdout filename.gz
+./gunzip --to-stdout filename.gz
+```
+
+The `-c`, `--stdout`, and `--to-stdout` options write decompressed data to stdout. When using these options, verbose header information and progress messages are suppressed (only errors go to stderr).
+
+**Example:**
+```bash
+$ ./gunzip -c LICENSE.gz > LICENSE
+$ ./gunzip --stdout file1.gz file2.gz > combined.txt  # Note: only processes first file
+```
+
+#### Decompress from stdin:
+```bash
+cat filename.gz | ./gunzip
+./gunzip - < filename.gz
+./gunzip < filename.gz
+```
+
+When no input filename is specified (or `-` is used), gunzip reads from stdin and writes to stdout.
+
+**Example:**
+```bash
+$ cat LICENSE.gz | ./gunzip > LICENSE
+$ curl https://example.com/file.gz | ./gunzip > file
+```
+
+### Pipe Chains
+
+Both utilities support standard Unix pipe workflows:
+
+```bash
+# Compress and decompress in a pipeline
+$ cat file.txt | ./gzip | ./gunzip > output.txt
+
+# Remote backup
+$ tar cf - /path/to/backup | ./gzip > backup.tar.gz
+
+# View compressed log without extraction
+$ ./gunzip -c logfile.gz | grep ERROR
+
+# Compress multiple files into one archive
+$ cat file1 file2 file3 | ./gzip > combined.gz
 ```
 
 ## Implementation Details
